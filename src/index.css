@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+:root {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+body {
+  margin: 0;
+  background: #020617;
+  color: #e5e7eb;
+}
+
+#root {
+  min-height: 100vh;
+}
