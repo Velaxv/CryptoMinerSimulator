@@ -15,7 +15,6 @@ export interface GameState {
 }
 
 interface GameStore extends GameState {
-  // Actions
   incrementTick: () => void;
   setGameSpeed: (speed: number) => void;
   setSelectedEntityType: (type: EntityType | null) => void;
@@ -23,6 +22,7 @@ interface GameStore extends GameState {
   addCrypto: (currency: CurrencyID, amount: number) => void;
   addResearchData: (amount: number) => void;
   updateResources: (resources: Partial<GameState['resources']>) => void;
+  repairEntity: (entityId: string, cost: number) => boolean;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -57,8 +57,17 @@ export const useGameStore = create<GameStore>((set) => ({
     set((state) => ({ 
       resources: { ...state.resources, researchData: state.resources.researchData + amount } 
     })),
-  updateResources: (updates) => 
-    set((state) => ({ 
-      resources: { ...state.resources, ...updates } 
+  updateResources: (updates) =>
+    set((state) => ({
+      resources: { ...state.resources, ...updates }
     })),
+  repairEntity: (entityId, cost) => {
+    const state = useGameStore.getState();
+    if (state.resources.fiat < cost) return false;
+    set((s) => ({
+      resources: { ...s.resources, fiat: s.resources.fiat - cost }
+    }));
+    console.log(`Repaired ${entityId} for $${cost}`);
+    return true;
+  },
 }));

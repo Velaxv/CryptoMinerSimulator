@@ -6,16 +6,12 @@ export class Simulation {
   public static tick(): void {
     const store = useGameStore.getState();
 
-    // 1. Power Distribution & Voltage Modeling
     this.processPowerGrid();
-
-    // 2. Thermodynamics & Spatial Heat Diffusion
     this.processThermodynamics();
-
-    // 3. Maintenance & Wear & Tear
     this.processMaintenance();
+    this.processMining();
+    this.processOperatingCost();
 
-    // increment tick
     store.incrementTick();
   }
 
@@ -25,6 +21,11 @@ export class Simulation {
     const consumers = entities.filter((e): e is Entity => e.type !== 'GENERATOR' && e.type !== 'CABLE');
 
     consumers.forEach((consumer) => {
+      if (consumer.status === 'failed') {
+        consumer.voltage = 0;
+        return;
+      }
+
       const cx = consumer.position.x;
       const cy = consumer.position.y;
 
@@ -50,7 +51,7 @@ export class Simulation {
       consumer.voltage = voltage;
 
       if (voltage >= consumer.voltageClass * 0.9) {
-        consumer.status = consumer.status === 'inactive' || consumer.status === 'failed' ? consumer.status : 'active';
+        consumer.status = 'active';
       } else if (voltage >= consumer.voltageClass * 0.5) {
         consumer.status = 'throttled';
       } else {
@@ -64,14 +65,13 @@ export class Simulation {
     const entities = worldGrid.getAllEntities() as Entity[];
     const newTemperatures = new Map<string, number>();
 
-    // 1. Clear and reset heat map sources/sinks
     allHeatCells.forEach((cell: HeatCell, key: string) => {
       newTemperatures.set(key, cell.temperature);
     });
 
-    // 2. Apply heat generation and cooling to the map
     entities.forEach(entity => {
       if (entity.status === 'inactive' && entity.type !== 'GENERATOR') return;
+      if (entity.status === 'failed') return;
 
       const key = `${entity.position.x},${entity.position.y}`;
       let cellTemp = newTemperatures.get(key) || 0;
@@ -79,7 +79,6 @@ export class Simulation {
       if (entity.type === 'FAN' || entity.type === 'AC') {
         cellTemp = Math.max(0, cellTemp - entity.coolingPower);
       } else {
-        // Apply insulation to reduce heat impact
         const effectiveHeat = entity.heatGen * (1 - entity.thermalInsulation * 0.8);
         cellTemp += effectiveHeat;
       }
@@ -87,43 +86,38 @@ export class Simulation {
       newTemperatures.set(key, cellTemp);
     });
 
-    // 3. Convection: heat rises (affects cells above)
     newTemperatures.forEach((temp, key) => {
       const [xStr, yStr] = key.split(',');
       const x = parseInt(xStr);
       const y = parseInt(yStr);
-      
-      // Heat rises to the cell above
+
       if (y > 0) {
         const aboveKey = `${x},${y - 1}`;
         const aboveTemp = newTemperatures.get(aboveKey) || 0;
-        newTemperatures.set(aboveKey, aboveTemp + (temp * 0.1)); // 10% convection upward
+        newTemperatures.set(aboveKey, aboveTemp + (temp * 0.1));
       }
     });
 
-    // 4. Apply calculated temperatures back and check thresholds
     newTemperatures.forEach((temp, key) => {
-      const entity = worldGrid.getEntity(
-        parseInt(key.split(',')[0]),
-        parseInt(key.split(',')[1])
-      );
+      const [xStr, yStr] = key.split(',');
+      const x = parseInt(xStr);
+      const y = parseInt(yStr);
+      const entity = worldGrid.getEntity(x, y);
 
-      if (entity) {
-        const effectiveTemp = temp * (1 - entity.thermalInsulation * 0.5);
-        
-        // Thermal Throttling at 80 degrees
-        if (effectiveTemp > 80 && entity.status === 'active') {
-          entity.status = 'throttled';
-        }
-        // Critical failure at 150 degrees
-        if (effectiveTemp > 150) {
-          entity.status = 'failed';
-          entity.durability = Math.max(0, entity.durability - 10);
-        }
+      if (!entity) return;
+      if (entity.status === 'failed') return;
+
+      const effectiveTemp = temp * (1 - entity.thermalInsulation * 0.5);
+
+      if (effectiveTemp > 80 && entity.status === 'active') {
+        entity.status = 'throttled';
+      }
+      if (effectiveTemp > 150) {
+        entity.status = 'failed';
+        entity.durability = Math.max(0, entity.durability - 10);
       }
     });
 
-    // Update heat map in WorldGrid
     newTemperatures.forEach((temp, key) => {
       const [xStr, yStr] = key.split(',');
       const x = parseInt(xStr);
@@ -140,33 +134,63 @@ export class Simulation {
 
     entities.forEach((entity) => {
       if (entity.type === 'CABLE') {
-        // Cables degrade based on heat
         const cell = worldGrid.getHeatCell(entity.position.x, entity.position.y);
         const heatFactor = cell ? Math.max(1, cell.temperature / 50) : 1;
         entity.durability -= entity.wearRate * heatFactor;
       } else if (entity.type !== 'GENERATOR') {
-        // Miners, Fans, AC degrade faster if throttled or high heat
         let degradation = entity.wearRate;
-        
+
         if (entity.status === 'throttled') {
           degradation *= 1.5;
-        }
-        if (entity.status === 'active') {
+        } else if (entity.status === 'active') {
           degradation *= 1.2;
         }
 
         const cell = worldGrid.getHeatCell(entity.position.x, entity.position.y);
         const heatFactor = cell ? Math.max(1, cell.temperature / 80) : 1;
-        
+
         entity.durability -= degradation * heatFactor;
       }
 
-      // Critical failure if durability depletes
       if (entity.durability <= 0) {
         entity.durability = 0;
         entity.status = 'failed';
-        useGameStore.getState().addFiat(-entity.durability); // Cost of damage
+        console.warn(`Entity ${entity.id} failed (durability depleted)`);
       }
     });
+  }
+
+  private static processMining(): void {
+    const store = useGameStore.getState();
+    const entities = worldGrid.getAllEntities() as Entity[];
+
+    entities.forEach((entity) => {
+      if (entity.type !== 'MINER') return;
+      if (entity.hashrate <= 0) return;
+
+      const statusMul =
+        entity.status === 'active' ? 1.0 :
+        entity.status === 'throttled' ? 0.4 :
+        0;
+
+      if (statusMul > 0) {
+        const mined = entity.hashrate * statusMul * 0.000001;
+        store.addCrypto('BTC', mined);
+      }
+    });
+  }
+
+  private static processOperatingCost(): void {
+    const store = useGameStore.getState();
+    const entities = worldGrid.getAllEntities() as Entity[];
+    let totalCost = 0;
+
+    entities.forEach((entity) => {
+      if (entity.type === 'GENERATOR' || entity.type === 'CABLE') return;
+      if (entity.status === 'active') totalCost += 0.05;
+      else if (entity.status === 'throttled') totalCost += 0.02;
+    });
+
+    if (totalCost > 0) store.addFiat(-totalCost);
   }
 }
