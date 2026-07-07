@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# OpenCode session files
+.omo/
+.ses/
+
+# Build artifacts
+dist/

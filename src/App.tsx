@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
-import { Dashboard } from './components/Dashboard';
-import { ControlPanel } from './components/ControlPanel';
+import { useState, useEffect } from 'react';
+import { Header } from './components/Header';
 import { BuildMenu } from './components/BuildMenu';
 import { GameGrid } from './components/GameGrid';
+import { Inspector } from './components/Inspector';
+import { Footer } from './components/Footer';
 import { gameEngine } from './core/GameEngine';
 import { worldGrid } from './core/WorldGrid';
+import type { Entity } from './core/WorldGrid';
 
 // Função para criar o cenário inicial para teste
 const seedWorld = () => {
@@ -103,6 +105,14 @@ const seedWorld = () => {
 };
 
 function App() {
+  const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
+  const [showInspector, setShowInspector] = useState(window.innerWidth >= 1280);
+
+  const handleEntitySelect = (entity: Entity) => {
+    setSelectedEntity(entity);
+    if (!showInspector) setShowInspector(true);
+  };
+
   useEffect(() => {
     seedWorld();
     gameEngine.start();
@@ -113,13 +123,31 @@ function App() {
   }, []);
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-950 text-slate-100">
-      <Dashboard />
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#0B1215] text-[#F8FAFC]">
+      {/* Header */}
+      <Header />
+
+      {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden">
-        <ControlPanel />
+        {/* Left Sidebar - Build Menu */}
         <BuildMenu />
-        <GameGrid />
+
+        {/* Main Grid Area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <GameGrid onEntitySelect={handleEntitySelect} />
+        </div>
+
+        {/* Right Sidebar - Inspector (collapsible) */}
+        {showInspector && (
+          <Inspector
+            entity={selectedEntity}
+            onClose={() => setShowInspector(false)}
+          />
+        )}
       </div>
+
+      {/* Footer */}
+      <Footer />
     </div>
   );
 }
